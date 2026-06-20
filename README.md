@@ -1,10 +1,3 @@
-# tiva-c-pendulum-profiler
-
-# 🎯 Event-Driven Ultrasonic Pendulum Profiler
-> A high-performance, zero-overhead embedded tracking system built for the TI Tiva C Series (TM4C1294NCPDT).
-
----
-
 ## 📖 Project Overview
 
 This repository contains the complete firmware for an event-driven spatial tracker. By leveraging the **TI Tiva C Series** microcontroller, the system monitors a physical pendulum’s motion in real-time, fires precise ultrasonic sonar waves to gauge distance, and maps the tracking metrics across an 8-bit LED display ribbon. 
@@ -59,8 +52,3 @@ During the alternative swing phase, the calculated metric (`g_distance_cm`) is e
 ### Toolchain Requirements
 * **IDE:** Code Composer Studio (CCS) v12 or higher.
 * **SDK Dependency:** TivaWare for C Series (specifically utilizing the direct register mappings found in `inc/tm4c1294ncpdt.h`).
-
-### Step-by-Step Workspace Setup
-1. Clone the project locally into your machine:
-   ```bash
-   git clone [https://github.com/YOUR_USERNAME/tiva-c-pendulum-profiler.git](https://github.com/YOUR_USERNAME/tiva-c-pendulum-profiler.git)
