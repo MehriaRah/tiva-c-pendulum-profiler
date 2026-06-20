@@ -1,0 +1,141 @@
+#include <stdint.h>
+#include "inc/tm4c1294ncpdt.h"
+
+// ============================================================================
+// Global Volatile Variables (Shared safely between background ISRs)
+// ============================================================================
+volatile uint32_t g_echo_cycles = 0;
+volatile uint32_t g_distance_cm = 0;
+
+// ============================================================================
+// GPIO PORT D ISR: Ultrasonic Echo Profiler (Measures Travel Flight Time)
+// ============================================================================
+void GPIO_PortD_Handler(void)
+{
+    // Clear Port D Pin 1 interrupt flag
+    GPIO_PORTD_AHB_ICR_R |= 0x02; 
+
+    // Check state of Pin 1 (Echo Input)
+    if (GPIO_PORTD_AHB_DATA_R & 0x02)
+    {
+        // --- RISING EDGE: Echo Pulse started -> Start Stopwatch (Timer 1) ---
+        TIMER1_CTL_R  &= ~0x01;       // Stop Timer 1 to configure
+        TIMER1_CFG_R   = 0x00;        // 32-bit mode
+        TIMER1_TAMR_R  = 0x02;        // Periodic Countdown mode
+        TIMER1_TAILR_R = 0xFFFFFFFF;  // Max countdown value
+        TIMER1_ICR_R   = 0x01;        // Clear flag
+        TIMER1_CTL_R  |= 0x01;        // Start Stopwatch
+    }
+    else
+    {
+        // --- FALLING EDGE: Echo Pulse ended -> Stop Stopwatch (Timer 1) ---
+        TIMER1_CTL_R &= ~0x01;        // Freeze Stopwatch instantly
+        
+        uint32_t final_ticks = TIMER1_TAR_R; 
+        g_echo_cycles = 0xFFFFFFFF - final_ticks; // Elapsed internal clock ticks
+        
+        // Calculate centimeters directly in background pipeline (16MHz clock factor)
+        g_distance_cm = g_echo_cycles / 933; 
+    }
+}
+
+// ============================================================================
+// GPIO PORT K ISR: Edge-Triggered Pendulum State Machine
+// ============================================================================
+void GPIO_PortK_Handler(void)
+{
+    // Clear Port K Pin 0 interrupt flag
+    GPIO_PORTK_ICR_R |= 0x01; 
+
+    // Check current state of Pin 0 (1 = Rising Edge / Left, 0 = Falling Edge / Right)
+    if (GPIO_PORTK_DATA_R & 0x01)
+    {
+        // --- SWING DIRECTION 1: RISING EDGE (Left Reversal Point Reached) ---
+        // Turn off LED display block instantly before the sweep path starts
+        GPIO_PORTM_DATA_R &= ~0xFF; 
+        
+        // Generate an Ultrasonic Hardware Trigger Pulse on PD0 immediately
+
+
+        GPIO_PORTD_AHB_DATA_R &= ~0x01;  
+    }
+    else
+    {
+        GPIO_PORTD_AHB_DATA_R |= 0x01;   
+        // --- SWING DIRECTION 2: FALLING EDGE (Right Reversal Point Reached) ---
+        // Map the calculated distance variable to the 8 LEDs pattern
+        uint8_t led_pattern = 0x00;
+        
+        if (g_distance_cm == 0) {
+            led_pattern = 0x00;   // Safe default if sensor missed the reading
+        } else if (g_distance_cm < 10) {
+            led_pattern = 0x01;  
+        } else if (g_distance_cm < 20) {
+            led_pattern = 0x03;  
+        } else if (g_distance_cm < 30) {
+            led_pattern = 0x0F;  
+        } else if (g_distance_cm < 40) {
+            led_pattern = 0x7F;  
+        } else {
+            led_pattern = 0xFF;  
+        }
+        
+        // Write pattern to Port M pins 0-7 safely
+        GPIO_PORTM_DATA_R = led_pattern;
+    }
+}
+
+// ============================================================================
+// System Hardware Configuration Setup
+// ============================================================================
+void init_hardware_all(void)
+{
+    // 1. Enable Peripheral Clocks for Port D, K, M (0xA08) and Timer 1 (0x02)
+    SYSCTL_RCGCGPIO_R  |= 0x00000A08; 
+    SYSCTL_RCGCTIMER_R |= 0x00000002; 
+    
+    while(!(SYSCTL_PRGPIO_R  & 0x00000A08));
+    while(!(SYSCTL_PRTIMER_R & 0x00000002));
+
+    // 2. Setup Port D Pins (PD0 = Output Trigger, PD1 = Input Echo)
+    GPIO_PORTD_AHB_DEN_R |= 0x03; 
+    GPIO_PORTD_AHB_DIR_R |= 0x01; // PD0 Out, PD1 In           
+
+    // 3. Setup Port K Pins (PK0 = Input from Pendulum Reversal Signal)
+    GPIO_PORTK_DEN_R |= 0x01;
+    GPIO_PORTK_DIR_R &= ~0x01;     // PK0 is an INPUT listening to the pendulum
+    GPIO_PORTK_PUR_R |= 0x01;      // Pull-up resistor for signal edge stability
+
+    // 4. Setup Port M Pins (PM0-PM7 = OUTPUT LED Display Ribbon)
+    GPIO_PORTM_DEN_R |= 0xFF;
+    GPIO_PORTM_DIR_R |= 0xFF;     // PM0-PM7 are OUTPUTS driving the lights
+
+    // 5. Setup Port D Hardware Interrupt Controller (Pin 1 for Both Edges)
+    GPIO_PORTD_AHB_IM_R  &= ~0x02; 
+    GPIO_PORTD_AHB_IS_R  &= ~0x02; // Edge trigger mode
+    GPIO_PORTD_AHB_IBE_R |=  0x02; // Both edges enabled
+    GPIO_PORTD_AHB_ICR_R |=  0x02; // Clear flags
+    GPIO_PORTD_AHB_IM_R  |=  0x02; // Unmask interrupt
+
+    // 6. Setup Port K Hardware Interrupt Controller (Pin 0 for Both Edges)
+    GPIO_PORTK_IM_R  &= ~0x01;
+    GPIO_PORTK_IS_R  &= ~0x01; // Edge trigger mode
+    GPIO_PORTK_IBE_R |=  0x01; // Both edges enabled
+    GPIO_PORTK_ICR_R  |= 0x01; // Clear flags
+    GPIO_PORTK_IM_R  |=  0x01; // Unmask interrupt
+
+    // 7. Enable Central Interrupt Channels inside the NVIC
+    NVIC_EN0_R |= (1 << 3);   // Enable Interrupt #3: Port D Matrix
+    NVIC_EN1_R |= (1 << (52-32));  // Enable Interrupt #120: Port K Matrix
+}
+
+int main(void)
+{
+    init_hardware_all(); 
+   
+
+    while (1)
+    {
+        // Fully empty loop driven by background events
+    }
+}
